@@ -1,53 +1,34 @@
-import os
 import requests
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
-import pytz
+import plotly.graph_objs as go
 
-# Function to get data from Fiber API
-def get_fiber_data():
-    url = "https://api-dashboard.fiber.channel/analysis"
-    payload = {
-        "range": "1M",
-        "interval": "day",
-        "fields": ["nodes", "channels", "capacity"],
-        "net": "mainnet"
-    }
-    response = requests.post(url, json=payload)
-    response.raise_for_status()
-    return response.json()
+# Your existing code logic to get data from Fiber API
 
-# Function to create charts
-def create_charts(data):
-    dates = [datetime.fromtimestamp(entry['timestamp']).strftime('%Y-%m-%d') for entry in data]
-    nodes = [entry['nodes'] for entry in data]
-    channels = [entry['channels'] for entry in data]
-    capacity = [entry['capacity'] / 10**8 for entry in data]  # Convert to CKB
+# Assuming `data` contains the API response with 'series' and 'points'
 
-    # Total Active Nodes chart
-    fig_nodes = go.Figure(data=[go.Bar(x=dates, y=nodes, name='Total Active Nodes')])
-    fig_nodes.update_layout(title='TOTAL ACTIVE NODES', xaxis_title='Date', yaxis_title='Nodes')
-    fig_nodes.write_image("total_active_nodes.png")
+# Sample data structure assumption: 
+# data = { 'series': { 'Nodes': [...], 'Channels': [...], 'Capacity': [...] }, 'points': [...] }
 
-    # Total Channels chart
-    fig_channels = go.Figure(data=[go.Bar(x=dates, y=channels, name='Total Channels (CKB)')])
-    fig_channels.update_layout(title='TOTAL CHANNELS', xaxis_title='Date', yaxis_title='Channels')
-    fig_channels.write_image("total_channels.png")
+# Convert Capacity hex to int and then divide by 1e8
+capacity_total = int(data['series']['Capacity'][0], 16) / 1e8
 
-    # CKB Liquidity chart
-    fig_capacity = go.Figure(data=[go.Bar(x=dates, y=capacity, name='CKB Liquidity (Total)')])
-    fig_capacity.update_layout(title='CKB LIQUIDITY', xaxis_title='Date', yaxis_title='CKB')
-    fig_capacity.write_image("ckb_liquidity.png")
+# Create plots
+fig_nodes = go.Figure(data=[go.Bar(x=data['series']['Nodes'], y=data['points']['Nodes'])])
+fig_channels = go.Figure(data=[go.Bar(x=data['series']['Channels'], y=data['points']['Channels'])])
+fig_capacity = go.Figure(data=[go.Bar(x=['Total Capacity'], y=[capacity_total])])
 
-# Function to send images to Discord
-def send_to_discord(image_path):
-    webhook_url = os.getenv('FIBER_DISCORD_WEBHOOK_URL')
-    with open(image_path, 'rb') as image:
-        requests.post(webhook_url, files={'file': image})
+# Export plots as PNG
+fig_nodes.write_image('nodes.png')
+fig_channels.write_image('channels.png')
+fig_capacity.write_image('capacity.png')
 
-if __name__ == "__main__":
-    data = get_fiber_data()
-    create_charts(data)
-    send_to_discord("total_active_nodes.png")
-    send_to_discord("total_channels.png")
-    send_to_discord("ckb_liquidity.png")
+# Send images via Discord webhook
+webhook_url = 'YOUR_DISCORD_WEBHOOK_URL'
+
+with open('nodes.png', 'rb') as img:
+    requests.post(webhook_url, files={'file': img})
+with open('channels.png', 'rb') as img:
+    requests.post(webhook_url, files={'file': img})
+with open('capacity.png', 'rb') as img:
+    requests.post(webhook_url, files={'file': img})
+
+# Make sure to handle the response from Discord to check if the images were sent correctly.
