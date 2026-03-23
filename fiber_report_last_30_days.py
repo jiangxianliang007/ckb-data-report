@@ -70,6 +70,7 @@ def parse_capacity_series(series_capacity: dict) -> pd.DataFrame:
 
         v_ckb = None
         if isinstance(total_hex, str) and total_hex.startswith("0x"):
+            # capacity total is in shannons, convert to CKB
             v_ckb = int(total_hex, 16) / 1e8
 
         rows.append((d, v_ckb))
@@ -88,12 +89,34 @@ def create_bar_chart(df: pd.DataFrame, title: str, yaxis_title: str) -> bytes:
     aligned_values = [date_to_value.get(d.date(), None) for d in date_range]
     tick_labels = [d.strftime("%Y-%m-%d") for d in date_range]
 
+    def _fmt(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return ""
+
+        # Liquidity is large; show with 2 decimals and commas.
+        if yaxis_title.strip().upper() == "CKB":
+            return f"{float(v):,.2f}"
+
+        # Nodes / Channels: prefer integer display.
+        try:
+            fv = float(v)
+            if fv.is_integer():
+                return str(int(fv))
+            return f"{fv:.2f}"
+        except Exception:
+            return str(v)
+
+    text_labels = [_fmt(v) for v in aligned_values]
+
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
             x=date_range,
             y=aligned_values,
             name=yaxis_title,
+            text=text_labels,
+            textposition="outside",
+            cliponaxis=False,
         )
     )
 
@@ -109,23 +132,27 @@ def create_bar_chart(df: pd.DataFrame, title: str, yaxis_title: str) -> bytes:
             tickformat="%Y-%m-%d",
         ),
         width=1600,
-        height=800,
-        title_font_size=20,
-        xaxis_title_font_size=16,
-        yaxis_title_font_size=16,
-        margin=dict(t=60, b=60, l=60, r=60),
+        height=900,
+        margin=dict(t=80, b=60, l=60, r=60),
     )
+
+    ys = [
+        v
+        for v in aligned_values
+        if v is not None and not (isinstance(v, float) and pd.isna(v))
+    ]
+    if ys:
+        y_max = max(ys)
+        fig.update_yaxes(range=[0, y_max * 1.15])
 
     return pio.to_image(fig, format="png", scale=3)
 
-def send_3_images_once(webhook_url: str, content: str, files: dict):
+def send_to_discord_image(webhook_url: str, content: str, filename: str, img_bytes: bytes):
     webhook = DiscordWebhook(url=webhook_url, content=content)
-
-    for filename, b in files.items():
-        webhook.add_file(file=io.BytesIO(b).read(), filename=filename)
+    webhook.add_file(file=io.BytesIO(img_bytes).read(), filename=filename)
 
     resp = webhook.execute()
-    if not getattr(resp, "status_code", None) in (200, 204):
+    if getattr(resp, "status_code", None) not in (200, 204):
         raise RuntimeError(
             f"Discord webhook failed: {getattr(resp, 'status_code', None)} {getattr(resp, 'text', '')}"
         )
@@ -141,24 +168,41 @@ def main():
     channels_df = parse_channels_series(pick_series(data, "Channels"))
     capacity_df = parse_capacity_series(pick_series(data, "Capacity"))
 
-    nodes_png = create_bar_chart(nodes_df, "TOTAL ACTIVE NODES (Last 30 Days)", "Nodes")
-    channels_png = create_bar_chart(channels_df, "TOTAL CHANNELS (Last 30 Days)", "Channels (CKB)")
-    cap_png = create_bar_chart(capacity_df, "CKB LIQUIDITY (Last 30 Days)", "CKB")
-
     today = datetime.utcnow().strftime("%Y-%m-%d")
-    content = f"Fiber Mainnet Report (Last 30 Days) • Generated at {today}"
 
-    send_3_images_once(
-        webhook_url=webhook_url,
-        content=content,
-        files={
-            "fiber_total_active_nodes.png": nodes_png,
-            "fiber_total_channels.png": channels_png,
-            "fiber_ckb_liquidity.png": cap_png,
+    chart_specs = [
+        {
+            "df": nodes_df,
+            "title": "TOTAL ACTIVE NODES (Last 30 Days)",
+            "yaxis": "Nodes",
+            "filename": "fiber_total_active_nodes.png",
         },
-    )
+        {
+            "df": channels_df,
+            "title": "TOTAL CHANNELS (Last 30 Days)",
+            "yaxis": "Channels (CKB)",
+            "filename": "fiber_total_channels.png",
+        },
+        {
+            "df": capacity_df,
+            "title": "CKB LIQUIDITY (Last 30 Days)",
+            "yaxis": "CKB",
+            "filename": "fiber_ckb_liquidity.png",
+        },
+    ]
+
+    for spec in chart_specs:
+        img_bytes = create_bar_chart(spec["df"], spec["title"], spec["yaxis"])
+        content = f"{spec['title']} • Generated at {today}"
+        send_to_discord_image(
+            webhook_url=webhook_url,
+            content=content,
+            filename=spec["filename"],
+            img_bytes=img_bytes,
+        )
 
     print("Fiber report sent to Discord successfully.")
+
 
 if __name__ == "__main__":
     main()
