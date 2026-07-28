@@ -20,6 +20,9 @@ NOTION_TOKEN = os.environ["NOTION_TOKEN"]
 NOTION_PAGE_ID = os.environ["NOTION_PAGE_ID"]
 DISCORD_WEBHOOK = os.environ["DISCORD_WEBHOOK"]
 
+# 通知期号年份（用于 “Administration Notice [YYYY]”），默认取下个月的年份
+NOTICE_YEAR = None
+
 NOTION_HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
     "Notion-Version": "2022-06-28",
@@ -174,34 +177,78 @@ def build_filtered(countries, target_year, target_month):
     return out
 
 
-def render_message(filtered, target_year, target_month):
-    title = datetime.date(target_year, target_month, 1).strftime("%B %Y")
-    lines = [f"# 📢 {title} Public Holiday Reference (Global)\n"]
+def render_message(filtered, target_year, target_month, today=None):
+    """生成完整通知：抬头引言 + 各国节假日 + 结尾 Notes + 落款。"""
+    today = today or datetime.date.today()
+    month_name = datetime.date(target_year, target_month, 1).strftime("%B %Y")
+    notice_year = NOTICE_YEAR or target_year
+
+    lines = []
+
+    # ---- 抬头 ----
+    lines.append(f"# 📢 Administration Notice [{notice_year}]")
+    lines.append("")
+    lines.append(f"## {month_name} Public Holiday Reference (Global)")
+    lines.append("")
+    lines.append("Dear team,")
+    lines.append("")
+    lines.append(f"Below is a reference of public holidays across different "
+                 f"regions for {month_name}.")
+    lines.append("As a distributed team, we keep things flexible across regions "
+                 "and time zones. The information below is shared for general "
+                 "awareness.")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+
+    # ---- 正文：各国节假日 ----
     if not filtered:
         lines.append("No public holidays next month across tracked regions.")
-        return "\n".join(lines)
+    else:
+        for c in filtered:
+            flag = f"{c['flag']} " if c["flag"] else ""
+            lines.append(f"### {flag}{c['name']}")
+            for _, row, date_col in c["rows"]:
+                name = row.get(COL_NAME, "").strip()
+                date = row.get(date_col, "").strip()
+                dur = row.get(COL_DURATION, "").strip()
+                remarks = row.get(COL_REMARKS, "").strip()
+                extra = " — ".join(x for x in [dur, remarks] if x)
+                extra = f" — {extra}" if extra else ""
+                lines.append(f"- {date}: {name}{extra}")
+            lines.append("")
 
-    for c in filtered:
-        flag = f"{c['flag']} " if c["flag"] else ""
-        lines.append(f"## {flag}{c['name']}")
-        for _, row, date_col in c["rows"]:
-            name = row.get(COL_NAME, "").strip()
-            date = row.get(date_col, "").strip()
-            dur = row.get(COL_DURATION, "").strip()
-            remarks = row.get(COL_REMARKS, "").strip()
-            extra = " — ".join(x for x in [dur, remarks] if x)
-            extra = f" — {extra}" if extra else ""
-            lines.append(f"- {date}: {name}{extra}")
-        lines.append("")
+    # ---- 结尾 Notes ----
+    lines.append("---")
+    lines.append("")
+    lines.append("## 🗒️ Notes")
+    lines.append("")
+    lines.append("- Please arrange your work accordingly ahead of the holidays.")
+    lines.append("- Stay reachable during holidays if urgent matters arise.")
+    lines.append("- For countries with **federal, state, provincial, territorial, "
+                 "or canton-based holiday systems** (e.g. Australia, Canada, "
+                 "Malaysia, Switzerland, and the United States), additional public "
+                 "holidays or observances may apply depending on your local "
+                 "jurisdiction. Please refer to your local arrangements where "
+                 "applicable.")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+
+    # ---- 落款（时间用脚本运行当天）----
+    lines.append("Operations Team")
+    lines.append("")
+    lines.append(today.strftime("%B %-d, %Y"))
+
     return "\n".join(lines)
 
 
 # ----------------- Discord 发送 -----------------
 def send_discord(content):
-    """按 2000 字符限制，尽量按国家段落切分后发送。"""
+    """按 2000 字符限制，尽量按段落切分后发送。"""
     chunks, buf = [], ""
     for line in content.split("\n"):
-        if line.startswith("## ") and len(buf) > 1500:
+        if line.startswith(("## ", "### ", "---")) and len(buf) > 1500:
             chunks.append(buf)
             buf = ""
         if len(buf) + len(line) + 1 > 1900:
@@ -230,7 +277,7 @@ def main():
 
     countries = parse_page_tables(NOTION_PAGE_ID)
     filtered = build_filtered(countries, target_year, target_month)
-    message = render_message(filtered, target_year, target_month)
+    message = render_message(filtered, target_year, target_month, today=today)
 
     print("---- 预览 ----")
     print(message)
