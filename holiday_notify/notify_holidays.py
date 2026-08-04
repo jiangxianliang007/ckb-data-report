@@ -192,8 +192,12 @@ def render_message(filtered, target_year, target_month, today=None):
     lines.append("")
     lines.append("Dear team,")
     lines.append("")
-    lines.append(f"Below is a reference of public holidays across different "
-                 f"regions for {month_name}.")
+    lines.append(
+        f"Below is a reference to public holidays observed across countries "
+        f"and regions in {month_name}, including specific holiday arrangements "
+        f"where available."
+    )
+    lines.append("")
     lines.append("As a distributed team, we keep things flexible across regions "
                  "and time zones. The information below is shared for general "
                  "awareness.")
