@@ -6,7 +6,7 @@ Detection triggers if either:
 - Longest dependency chain is greater than `--max-chain-length 500`; or
 - A root transaction has more than `--max-descendants 1000` descendants.
 
-Only the **reference** node's chain identity is checked (`ckb_testnet`). Targets must be a trusted inventory group containing testnet nodes only. Any transactions removed affect local tx pools, not the network globally.
+Only the **reference** node's chain identity is checked (`ckb-testnet`). Targets must be a trusted inventory group containing testnet nodes only. Any transactions removed affect local tx pools, not the network globally.
 
 ## Usage
 
@@ -15,15 +15,14 @@ Python 3 and the Ansible CLI are required on the control server. Target nodes ne
 Example inventory:
 
 ```ini
-[ckb_testnet]
-testnet-1 ansible_host=10.0.0.11
-testnet-2 ansible_host=10.0.0.12
+[ckb-testnet]
+3.98.152.180
 ```
 
 Check SSH and the inventory first:
 
 ```bash
-ansible ckb_testnet -i /etc/ansible/hosts -m ping
+ansible ckb-testnet -i /etc/ansible/hosts -m ping
 ```
 
 Dry run (default):
@@ -35,15 +34,15 @@ python3 ckb_tx_pool_guard.py --inventory /etc/ansible/hosts
 Execute cleanup:
 
 ```bash
-python3 ckb_tx_pool_guard.py --execute --inventory /etc/ansible/hosts --group ckb_testnet
+python3 ckb_tx_pool_guard.py --execute --inventory /etc/ansible/hosts --group ckb-testnet
 ```
 
-If all CKB nodes use local port 8224 instead of 8114, set `--local-rpc http://127.0.0.1:8224`.
+The default RPC on each target is `http://127.0.0.1:18121`. Override with `--local-rpc` if needed.
 
 Run every 10 minutes via the Ansible control server user's crontab:
 
 ```cron
-*/10 * * * * /usr/bin/flock -n /tmp/ckb-tx-pool-guard.lock /usr/bin/python3 /opt/ckb-data-report/ckb_tx_pool_guard.py --execute --inventory /etc/ansible/hosts --group ckb_testnet >> /var/log/ckb-tx-pool-guard.log 2>&1
+*/10 * * * * /usr/bin/flock -n /tmp/ckb-tx-pool-guard.lock /usr/bin/python3 /opt/ckb-data-report/ckb_tx_pool_guard.py --execute --inventory /etc/ansible/hosts --group ckb-testnet >> /var/log/ckb-tx-pool-guard.log 2>&1
 ```
 
 Use a writable log path, and ensure the cron user has the correct Ansible SSH key and inventory access. `flock` prevents overlap. Test dry run first, then enable `--execute`.
