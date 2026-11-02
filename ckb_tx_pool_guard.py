@@ -142,7 +142,13 @@ def main():
             raise RuntimeError(f"Refusing non-testnet reference chain: {chain}")
         pool = rpc(args.rpc_url, "get_raw_tx_pool", [True])
         entries = {**pool["pending"], **pool["proposed"]}
-        LOG.info("chain=%s entries=%d execute=%s", chain, len(entries), args.execute)
+        max_ancestors = max((int(e["ancestors_count"], 16) for e in entries.values()), default=0)
+        max_descendants = max((int(e.get("descendants_count", "0x0"), 16) for e in entries.values()), default=0)
+        LOG.info(
+            "chain=%s entries=%d pending=%d proposed=%d execute=%s",
+            chain, len(entries), len(pool["pending"]), len(pool["proposed"]), args.execute
+        )
+        LOG.info("max_ancestors_count=%d max_descendants_count=%d", max_ancestors, max_descendants)
 
         roots = {}
         for h, entry in entries.items():
