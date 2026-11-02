@@ -143,19 +143,31 @@ def main():
         pool = rpc(args.rpc_url, "get_raw_tx_pool", [True])
         entries = {**pool["pending"], **pool["proposed"]}
         max_ancestors = max((int(e["ancestors_count"], 16) for e in entries.values()), default=0)
-        max_descendants = max((int(e.get("descendants_count", "0x0"), 16) for e in entries.values()), default=0)
+        # The verbose raw pool omits descendants_count. Query each root via detail RPC.
+        root_hashes = [h for h, e in entries.items() if int(e["ancestors_count"], 16) == 1]
+        root_details = {}
+        vanished = 0
+        for h, detail in zip(root_hashes, rpc_many(args.rpc_url, "get_pool_tx_detail_info", root_hashes)):
+            if detail is None:
+                vanished += 1  # Transaction left the pool during the scan.
+                continue
+            root_details[h] = int(detail["descendants_count"], 16)
+        max_descendants = max(root_details.values(), default=0)
         LOG.info(
             "chain=%s entries=%d pending=%d proposed=%d execute=%s",
             chain, len(entries), len(pool["pending"]), len(pool["proposed"]), args.execute
         )
-        LOG.info("max_ancestors_count=%d max_descendants_count=%d", max_ancestors, max_descendants)
+        LOG.info(
+            "max_ancestors_count=%d max_descendants_count=%d roots_checked=%d roots_vanished=%d",
+            max_ancestors, max_descendants, len(root_details), vanished
+        )
 
-        roots = {}
-        for h, entry in entries.items():
-            if int(entry["ancestors_count"], 16) == 1 and int(entry.get("descendants_count", "0x0"), 16) > args.max_descendants:
-                roots[h] = {"depth": None, "descendants": int(entry["descendants_count"], 16)}
+        roots = {
+            h: {"depth": None, "descendants": count}
+            for h, count in root_details.items() if count > args.max_descendants
+        }
         for h, depth in depth_roots(args.rpc_url, entries, args.max_chain_length).items():
-            roots.setdefault(h, {"depth": None, "descendants": int(entries[h].get("descendants_count", "0x0"), 16)})
+            roots.setdefault(h, {"depth": None, "descendants": root_details.get(h, 0)})
             roots[h]["depth"] = depth
 
         selected = sorted(roots.items(), key=lambda x: max(x[1]["depth"] or 0, x[1]["descendants"]), reverse=True)[:args.max_roots]
