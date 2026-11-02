@@ -1,6 +1,6 @@
 # CKB Testnet TxPool Guard
 
-One Python script runs **only on the Ansible control server**. It examines the reference CKB testnet node (`http://35.79.78.62:8224`), removes an abnormal root transaction from that node, then runs **Ansible ad-hoc shell** with `curl` on all targets to remove the same hash. No script is copied onto target machines, and target machines do not scan their tx pools.
+One Python script runs **only on the Ansible control server**. It examines the reference CKB testnet node (`http://54.238.17.163:8224`), removes an abnormal root transaction from that node, then runs **Ansible ad-hoc shell** with `curl` on all targets to remove the same hash. No script is copied onto target machines, and target machines do not scan their tx pools.
 
 Detection triggers if either:
 - Longest dependency chain is greater than `--max-chain-length 500`; or
