@@ -2,6 +2,8 @@
 
 One Python script runs **only on the Ansible control server**. It examines the reference CKB testnet node (`http://54.238.17.163:8224`), removes an abnormal root transaction from that node, then runs **Ansible ad-hoc shell** with `curl` on all targets to remove the same hash. No script is copied onto target machines, and target machines do not scan their tx pools.
 
+The script calls `get_pool_tx_detail_info` in batches for root transactions to retrieve real `descendants_count` values. `get_raw_tx_pool(true)` does not include this field. Logs report `max_ancestors_count`, `max_descendants_count`, `roots_checked` and `roots_vanished` (transactions that left the pool during scanning). An RPC error aborts the run without silently treating missing counts as zero.
+
 Detection triggers if either:
 - Longest dependency chain is greater than `--max-chain-length 500`; or
 - A root transaction has more than `--max-descendants 1000` descendants.
