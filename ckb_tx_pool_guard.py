@@ -127,8 +127,8 @@ def main():
     p.add_argument("--max-descendants", type=int, default=1000)
     p.add_argument("--max-roots", type=int, default=2)
     p.add_argument("--inventory", default="/etc/ansible/hosts")
-    p.add_argument("--group", default="ckb_testnet")
-    p.add_argument("--local-rpc", default="http://127.0.0.1:8114")
+    p.add_argument("--group", default="ckb-testnet")
+    p.add_argument("--local-rpc", default="http://127.0.0.1:18121")
     p.add_argument("--execute", action="store_true", help="Actually remove transactions (default: dry run)")
     args = p.parse_args()
     if min(args.max_chain_length, args.max_descendants, args.max_roots) < 1:
