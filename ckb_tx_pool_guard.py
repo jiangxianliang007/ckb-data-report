@@ -122,7 +122,7 @@ def remote_cleanup(args, tx_hash):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--rpc-url", default="http://35.79.78.62:8224")
+    p.add_argument("--rpc-url", default="http://54.238.17.163:8224")
     p.add_argument("--max-chain-length", type=int, default=500)
     p.add_argument("--max-descendants", type=int, default=1000)
     p.add_argument("--max-roots", type=int, default=2)
