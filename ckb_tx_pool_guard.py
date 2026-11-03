@@ -89,16 +89,18 @@ def trace_roots(url, entries, candidates):
     return sorted(result)
 
 
-def remote_cleanup(args, tx_hash):
+def remote_cleanup(args, tx_hash=None, clear=False):
     # The hash is validated, and only the RPC cleanup call runs on target hosts.
     # No Python file or helper script is deployed to them.
+    method = "clear_tx_pool" if clear else "remove_transaction"
+    params = [] if clear else [tx_hash]
     payload = json.dumps({"jsonrpc": "2.0", "id": 1,
-                          "method": "remove_transaction", "params": [tx_hash]})
+                          "method": method, "params": params})
     command = ("curl --fail --silent --show-error --max-time 30 "
                "-H 'Content-Type: application/json' --data-binary "
                + shlex.quote(payload) + " " + shlex.quote(args.local_rpc))
     cmd = ["ansible", args.group, "-i", args.inventory, "-m", "shell", "-a", command]
-    LOG.info("ansible cleanup group=%s tx=%s", args.group, tx_hash)
+    LOG.info("ansible cleanup group=%s method=%s tx=%s", args.group, method, tx_hash)
     result = subprocess.run(cmd, text=True, capture_output=True, timeout=180)
     if result.stdout.strip():
         LOG.info("ansible stdout: %s", result.stdout.strip())
@@ -119,6 +121,10 @@ def main():
     p.add_argument("--max-ancestors", type=int, default=10)
     p.add_argument("--max-candidates", type=int, default=500)
     p.add_argument("--max-roots", type=int, default=20)
+    p.add_argument("--clear-on-pending", action="store_true",
+                   help="clear entire testnet pool when pending exceeds --pending-threshold")
+    p.add_argument("--clear-tx-pool", action="store_true",
+                   help="manually clear entire testnet pool; requires --execute")
     p.add_argument("--max-estimated-txs", type=int, default=500,
                    help="maximum estimated root+descendant transactions selected per run")
     p.add_argument("--inventory", default="/etc/ansible/hosts")
@@ -135,6 +141,26 @@ def main():
         chain = info["chain"]
         if chain != "ckb_testnet":
             raise RuntimeError(f"Refusing non-testnet reference chain: {chain}")
+        # Full-pool cleanup is explicitly opted in; age/ancestors alone never trigger it.
+        if args.clear_tx_pool or args.clear_on_pending:
+            pool_info = rpc(args.rpc_url, "tx_pool_info")
+            count = int(pool_info["pending"], 16)
+            clear = args.clear_tx_pool or count > args.pending_threshold
+            LOG.info("clear_check pending=%d threshold=%d forced=%s eligible=%s",
+                     count, args.pending_threshold, args.clear_tx_pool, clear)
+            if clear:
+                LOG.warning("FULL_POOL_CLEAR pending=%d reference=%s group=%s execute=%s",
+                            count, args.rpc_url, args.group, args.execute)
+                if not args.execute:
+                    LOG.warning("DRY_RUN would clear reference and Ansible group")
+                    return 0
+                rpc(args.rpc_url, "clear_tx_pool")
+                LOG.warning("reference clear_tx_pool complete")
+                remote_cleanup(args, clear=True)
+                after = rpc(args.rpc_url, "tx_pool_info")
+                LOG.info("full_clear pending_before=%d pending_after=%d",
+                         count, int(after["pending"], 16))
+                return 0
         pool = rpc(args.rpc_url, "get_raw_tx_pool", [True])
         entries = {**pool["pending"], **pool["proposed"]}
         max_ancestors = max((int(e["ancestors_count"], 16) for e in entries.values()), default=0)
