@@ -54,3 +54,7 @@ Note: the Python script records Ansible stdout/stderr. Ansible failure exits non
 ## Current options
 
 Run on the Ansible controller. The default detection thresholds are pending > 10000, transaction age > 300 seconds, or ancestors_count > 10. The script scans up to 500 qualifying candidates, sorts traced roots by descendants_count, and selects up to 20 roots with a combined estimated removal budget of 500 transactions. The estimated budget is not an exact count: some descendant sets may overlap or change during execution. The reference node is 54.238.17.163:8224, the remote inventory group is ckb-testnet and each target uses local RPC 127.0.0.1:18121. The command defaults to dry run; pass --execute to perform removal. Review the dry-run output before enabling a scheduled run, since ordinary pending transactions can remain unconfirmed for more than five minutes.
+
+## Optional full pool cleanup
+
+Use `--clear-on-pending` to enable full-pool cleanup only when reference Pending exceeds `--pending-threshold` (default 10000). Use `--clear-tx-pool` for a manual full-pool cleanup. Both require `--execute` to change state; without it they only log the intended action. Full-pool cleanup first calls `clear_tx_pool` on the reference Testnet node, then invokes a single Ansible ad-hoc command to call the same RPC on the `ckb-testnet` target group. Ordinary execution without those flags continues selective root cleanup. Clearing a pool removes all local unconfirmed transactions including legitimate ones; it does not undo committed blockchain transactions.
