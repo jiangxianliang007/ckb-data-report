@@ -172,6 +172,7 @@ def main():
         over_age = 0
         over_ancestors = 0
         missing_ts = 0
+        max_age_seconds = 0
         for h, entry in pool["pending"].items():
             ancestor_count = int(entry["ancestors_count"], 16)
             timestamp = entry.get("timestamp")
@@ -180,6 +181,7 @@ def main():
                 age = 0
             else:
                 age = max(0, (now_ms - int(timestamp, 16)) // 1000)
+                max_age_seconds = max(max_age_seconds, age)
             age_bad = timestamp is not None and age > args.max_age_seconds
             ancestor_bad = ancestor_count > args.max_ancestors
             over_age += int(age_bad)
@@ -191,11 +193,14 @@ def main():
             "chain=%s entries=%d pending=%d proposed=%d execute=%s",
             chain, len(entries), pending_count, len(pool["proposed"]), args.execute
         )
+        LOG.info("pending=%d pending_threshold=%d", pending_count, args.pending_threshold)
         LOG.info(
-            "max_ancestors_count=%d over_age=%d over_ancestors=%d "
-            "pending_threshold=%d missing_timestamp=%d",
-            max_ancestors, over_age, over_ancestors,
-            args.pending_threshold, missing_ts
+            "max_age_seconds=%d age_threshold=%d over_age=%d missing_timestamp=%d",
+            max_age_seconds, args.max_age_seconds, over_age, missing_ts
+        )
+        LOG.info(
+            "max_ancestors_count=%d ancestors_threshold=%d over_ancestors=%d",
+            max_ancestors, args.max_ancestors, over_ancestors
         )
         if not candidates:
             LOG.info("no cleanup conditions matched")
