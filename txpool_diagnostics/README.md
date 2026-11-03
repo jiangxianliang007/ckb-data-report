@@ -1,6 +1,6 @@
 # CKB TxPool Diagnostics / 交易池故障诊断
 
-**只读工具**：用于排查 CKB Testnet/Mainnet 节点 Pending 积压、交易依赖结构、手续费集中、矿工不 Proposal 等问题。默认检查本机 `http://127.0.0.1:8114`。不会调用 `remove_transaction` 或 `clear_tx_pool`，也不会执行 Ansible。
+用于排查 CKB Testnet/Mainnet 节点 Pending 积压、交易依赖结构、手续费集中、矿工不 Proposal 等问题。默认检查本机 `http://127.0.0.1:8114`。
 
 ## 一键执行
 
@@ -48,7 +48,7 @@ python3 txpool_diagnostics/report.py --snapshot /tmp/ckb-pool.json
 - `txpool-report-YYYYMMDD-HHMMSS.md`：可直接保存/分享的中文诊断报告；
 - `txpool-snapshot-YYYYMMDD-HHMMSS.json`：原始 `get_raw_tx_pool(true)` 交易池快照，用于后续离线复盘。
 
-**时间与安全提示**：报告使用 UTC+8，北京时间。快照可能较大，并可能包含交易 Hash、费用、时间等数据；公开分享前请确认是否合适。报告只读，不清理节点；如果是事故现场，最好在重启/清池前保存。
+**时间与安全提示**：报告使用 UTC+8，北京时间。快照可能较大，并可能包含交易 Hash、费用、时间等数据；公开分享前请确认是否合适。如果是事故现场，最好在重启或清理交易池前保存数据。
 
 ## 需要特别注意
 
