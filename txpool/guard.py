@@ -13,6 +13,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+from urllib.parse import urlsplit
 
 LOG = logging.getLogger("ckb-txpool-guard")
 TX_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
@@ -96,9 +97,19 @@ def remote_cleanup(args, tx_hash=None, clear=False):
     params = [] if clear else [tx_hash]
     payload = json.dumps({"jsonrpc": "2.0", "id": 1,
                           "method": method, "params": params})
+    # Ansible renders this Jinja expression independently for each inventory host.
+    # Hosts without ckb_rpc_port use the port from --local-rpc (default 18121).
+    parsed = urlsplit(args.local_rpc)
+    if not parsed.hostname or not parsed.port:
+        raise ValueError("--local-rpc must include a hostname and port")
+    port = "{{ ckb_rpc_port | default(" + str(parsed.port) + ") }}"
+    hostname = parsed.hostname
+    if ":" in hostname:
+        hostname = "[" + hostname + "]"
+    target_rpc = parsed._replace(netloc=hostname + ":" + port).geturl()
     command = ("curl --fail --silent --show-error --max-time 30 "
                "-H 'Content-Type: application/json' --data-binary "
-               + shlex.quote(payload) + " " + shlex.quote(args.local_rpc))
+               + shlex.quote(payload) + " " + shlex.quote(target_rpc))
     cmd = ["ansible", args.group, "-i", args.inventory, "-m", "shell", "-a", command]
     LOG.info("ansible cleanup group=%s method=%s tx=%s", args.group, method, tx_hash)
     result = subprocess.run(cmd, text=True, capture_output=True, timeout=180)
