@@ -50,3 +50,7 @@ Run every 10 minutes via the Ansible control server user's crontab:
 Use a writable log path, and ensure the cron user has the correct Ansible SSH key and inventory access. `flock` prevents overlap. Test dry run first, then enable `--execute`.
 
 Note: the Python script records Ansible stdout/stderr. Ansible failure exits nonzero; if a particular remote RPC returns an error, inspect the logged output. This is an operational guard, not an automatic network-wide transaction ban.
+
+## Current options
+
+Run on the Ansible controller. The default detection thresholds are pending > 10000, transaction age > 300 seconds, or ancestors_count > 10. The script scans up to 500 qualifying candidates, sorts traced roots by descendants_count, and selects up to 20 roots with a combined estimated removal budget of 500 transactions. The estimated budget is not an exact count: some descendant sets may overlap or change during execution. The reference node is 54.238.17.163:8224, the remote inventory group is ckb-testnet and each target uses local RPC 127.0.0.1:18121. The command defaults to dry run; pass --execute to perform removal. Review the dry-run output before enabling a scheduled run, since ordinary pending transactions can remain unconfirmed for more than five minutes.
