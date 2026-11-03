@@ -115,16 +115,18 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--rpc-url", default="http://54.238.17.163:8224")
     p.add_argument("--pending-threshold", type=int, default=10000)
-    p.add_argument("--max-age-seconds", type=int, default=60)
+    p.add_argument("--max-age-seconds", type=int, default=300)
     p.add_argument("--max-ancestors", type=int, default=10)
-    p.add_argument("--max-candidates", type=int, default=100)
-    p.add_argument("--max-roots", type=int, default=2)
+    p.add_argument("--max-candidates", type=int, default=500)
+    p.add_argument("--max-roots", type=int, default=20)
+    p.add_argument("--max-estimated-txs", type=int, default=500,
+                   help="maximum estimated root+descendant transactions selected per run")
     p.add_argument("--inventory", default="/etc/ansible/hosts")
     p.add_argument("--group", default="ckb-testnet")
     p.add_argument("--local-rpc", default="http://127.0.0.1:18121")
     p.add_argument("--execute", action="store_true", help="Actually remove transactions (default: dry run)")
     args = p.parse_args()
-    if min(args.pending_threshold, args.max_age_seconds, args.max_ancestors, args.max_candidates, args.max_roots) < 1:
+    if min(args.pending_threshold, args.max_age_seconds, args.max_ancestors, args.max_candidates, args.max_roots, args.max_estimated_txs) < 1:
         p.error("thresholds and max-roots must be positive")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -175,12 +177,38 @@ def main():
         # First choose high-ancestor and older transactions; limit the trace workload.
         candidates.sort(key=lambda v: (v[4], v[3], v[1]), reverse=True)
         selected_candidates = [x[0] for x in candidates[:args.max_candidates]]
-        roots = trace_roots(args.rpc_url, entries, selected_candidates)[:args.max_roots]
-        LOG.warning("cleanup candidates=%d traced=%d roots=%d", len(candidates), len(selected_candidates), len(roots))
-        for h in roots:
+        root_hashes = trace_roots(args.rpc_url, entries, selected_candidates)
+        # Query root descendant counts, then prefer removing high-impact roots.
+        root_details = {}
+        vanished = 0
+        for root, detail in zip(root_hashes, rpc_many(args.rpc_url, "get_pool_tx_detail_info", root_hashes)):
+            if detail is None:
+                vanished += 1
+                continue
+            root_details[root] = int(detail["descendants_count"], 16)
+        ranked = sorted(root_details.items(), key=lambda kv: (-kv[1], kv[0]))
+        selected = []
+        estimated_total = 0
+        for root, descendants in ranked:
+            estimate = descendants + 1
+            if len(selected) >= args.max_roots:
+                break
+            if estimated_total + estimate > args.max_estimated_txs:
+                continue
+            selected.append((root, descendants))
+            estimated_total += estimate
+        LOG.warning(
+            "cleanup candidates=%d traced=%d root_candidates=%d roots_vanished=%d "
+            "selected_roots=%d estimated_txs=%d budget=%d",
+            len(candidates), len(selected_candidates), len(root_hashes), vanished,
+            len(selected), estimated_total, args.max_estimated_txs
+        )
+        if not selected and root_details:
+            LOG.warning("no roots fit the per-run estimated transaction budget")
+        for h, descendants in selected:
             if not TX_RE.fullmatch(h):
                 raise RuntimeError(f"Invalid transaction hash: {h}")
-            LOG.warning("trigger root=%s pending=%d over_age=%d over_ancestors=%d", h, pending_count, over_age, over_ancestors)
+            LOG.warning("trigger root=%s descendants=%d estimated_remove=%d", h, descendants, descendants + 1)
             if not args.execute:
                 LOG.info("DRY_RUN would remove root=%s on reference and Ansible group=%s", h, args.group)
                 continue
@@ -190,6 +218,9 @@ def main():
                 remote_cleanup(args, h)
             else:
                 LOG.warning("skip Ansible root=%s: reference transaction not found", h)
+        if args.execute and selected:
+            after = rpc(args.rpc_url, "tx_pool_info")
+            LOG.info("pending_before=%d pending_after=%d", pending_count, int(after["pending"], 16))
         return 0
     except (OSError, KeyError, TypeError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
         LOG.exception("guard failed: %s", exc)
