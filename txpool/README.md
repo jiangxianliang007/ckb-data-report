@@ -42,3 +42,22 @@ python3 txpool/diagnostics/report.py --rpc-url http://127.0.0.1:8114
 ## 合并部署注意
 
 此前目录 `txpool_diagnostics/` 已整理到 `txpool/diagnostics/`。合并 PR 后请更新所有引用原路径的命令和定时任务；原先功能分支根目录的 `ckb_tx_pool_guard.py` 对应这里的 `txpool/guard.py`。
+
+## 为单台主机覆盖 RPC 端口
+
+目标节点默认使用 `http://127.0.0.1:18121`。仅端口不同的主机在 `/etc/ansible/hosts` 中设置 `ckb_rpc_port`：
+
+```ini
+[ckb-testnet]
+3.98.152.180
+10.0.0.12 ckb_rpc_port=8114
+10.0.0.13
+```
+
+未指定端口的主机仍使用 18121；指定了 `ckb_rpc_port=8114` 的主机使用本机 8114。`--local-rpc` 可以改变整个分组的默认地址和端口，但主机变量会覆盖端口。该设置对 `clear_tx_pool` 和 `remove_transaction` 都生效，查询参考节点的 `--rpc-url` 不受影响，cron 无需改动。
+
+测试连接：
+
+```bash
+ansible ckb-testnet -i /etc/ansible/hosts -m ping
+```
