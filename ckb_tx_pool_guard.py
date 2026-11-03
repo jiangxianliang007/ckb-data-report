@@ -11,6 +11,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 import urllib.request
 
 LOG = logging.getLogger("ckb-txpool-guard")
@@ -50,52 +51,42 @@ def rpc_many(url, method, tx_hashes):
     return output
 
 
-def depth_roots(url, entries, threshold):
-    """Trace dependencies of high-ancestor-count transactions, returning root->max depth.
-
-    We never infer a root if a required transaction cannot be fetched.
-    """
-    candidates = [h for h, info in entries.items()
-                  if int(info["ancestors_count"], 16) > threshold]
-    if not candidates:
-        return {}
+def trace_roots(url, entries, candidates):
+    """Return roots for selected transactions using their in-pool dependencies."""
     graph = {}
     frontier = set(candidates)
     while frontier:
-        missing = sorted(h for h in frontier if h not in graph)
+        hashes = sorted(frontier - graph.keys())
         frontier = set()
         fetch = []
-        for h in missing:
+        for h in hashes:
             if int(entries[h]["ancestors_count"], 16) == 1:
                 graph[h] = set()
             else:
                 fetch.append(h)
         for h, result in zip(fetch, rpc_many(url, "get_transaction", fetch)):
             if not result or not result.get("transaction"):
-                raise RuntimeError(f"Cannot resolve dependency for {h}; refusing cleanup")
+                graph[h] = None
+                continue
             tx = result["transaction"]
             tx = tx.get("inner", tx)
             parents = {x["previous_output"]["tx_hash"] for x in tx.get("inputs", [])}
             parents.update(x["out_point"]["tx_hash"] for x in tx.get("cell_deps", []))
             graph[h] = parents.intersection(entries)
             frontier.update(graph[h] - graph.keys())
-
-    paths = {}
-    for h in sorted(graph, key=lambda v: int(entries[v]["ancestors_count"], 16)):
-        parents = graph[h]
-        if not parents:
-            paths[h] = (1, h)
-        else:
-            if any(p not in paths for p in parents):
-                raise RuntimeError(f"Unresolved dependency graph at {h}")
-            depth, root = max((paths[p] for p in parents), key=lambda pair: pair[0])
-            paths[h] = (depth + 1, root)
     roots = {}
+    for h in sorted(graph, key=lambda k: int(entries[k]["ancestors_count"], 16)):
+        parents = graph[h]
+        if parents is None:
+            roots[h] = set()
+        elif not parents:
+            roots[h] = {h}
+        else:
+            roots[h] = set().union(*(roots.get(p, set()) for p in parents))
+    result = set()
     for h in candidates:
-        depth, root = paths[h]
-        if depth > threshold:
-            roots[root] = max(depth, roots.get(root, 0))
-    return roots
+        result.update(roots.get(h, set()))
+    return sorted(result)
 
 
 def remote_cleanup(args, tx_hash):
@@ -123,15 +114,17 @@ def remote_cleanup(args, tx_hash):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--rpc-url", default="http://54.238.17.163:8224")
-    p.add_argument("--max-chain-length", type=int, default=500)
-    p.add_argument("--max-descendants", type=int, default=1000)
+    p.add_argument("--pending-threshold", type=int, default=10000)
+    p.add_argument("--max-age-seconds", type=int, default=60)
+    p.add_argument("--max-ancestors", type=int, default=10)
+    p.add_argument("--max-candidates", type=int, default=100)
     p.add_argument("--max-roots", type=int, default=2)
     p.add_argument("--inventory", default="/etc/ansible/hosts")
     p.add_argument("--group", default="ckb-testnet")
     p.add_argument("--local-rpc", default="http://127.0.0.1:18121")
     p.add_argument("--execute", action="store_true", help="Actually remove transactions (default: dry run)")
     args = p.parse_args()
-    if min(args.max_chain_length, args.max_descendants, args.max_roots) < 1:
+    if min(args.pending_threshold, args.max_age_seconds, args.max_ancestors, args.max_candidates, args.max_roots) < 1:
         p.error("thresholds and max-roots must be positive")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -143,51 +136,60 @@ def main():
         pool = rpc(args.rpc_url, "get_raw_tx_pool", [True])
         entries = {**pool["pending"], **pool["proposed"]}
         max_ancestors = max((int(e["ancestors_count"], 16) for e in entries.values()), default=0)
-        # The verbose raw pool omits descendants_count. Query each root via detail RPC.
-        root_hashes = [h for h, e in entries.items() if int(e["ancestors_count"], 16) == 1]
-        root_details = {}
-        vanished = 0
-        for h, detail in zip(root_hashes, rpc_many(args.rpc_url, "get_pool_tx_detail_info", root_hashes)):
-            if detail is None:
-                vanished += 1  # Transaction left the pool during the scan.
-                continue
-            root_details[h] = int(detail["descendants_count"], 16)
-        max_descendants = max(root_details.values(), default=0)
+        # Any of the three configurable conditions triggers targeted root removal.
+        # Never remove the entire pool merely because its size is large.
+        pending_count = len(pool["pending"])
+        now_ms = int(time.time() * 1000)
+        candidates = []
+        over_age = 0
+        over_ancestors = 0
+        missing_ts = 0
+        for h, entry in pool["pending"].items():
+            ancestor_count = int(entry["ancestors_count"], 16)
+            timestamp = entry.get("timestamp")
+            if timestamp is None:
+                missing_ts += 1
+                age = 0
+            else:
+                age = max(0, (now_ms - int(timestamp, 16)) // 1000)
+            age_bad = timestamp is not None and age > args.max_age_seconds
+            ancestor_bad = ancestor_count > args.max_ancestors
+            over_age += int(age_bad)
+            over_ancestors += int(ancestor_bad)
+            if age_bad or ancestor_bad or pending_count > args.pending_threshold:
+                candidates.append((h, age, ancestor_count, age_bad, ancestor_bad))
+
         LOG.info(
             "chain=%s entries=%d pending=%d proposed=%d execute=%s",
-            chain, len(entries), len(pool["pending"]), len(pool["proposed"]), args.execute
+            chain, len(entries), pending_count, len(pool["proposed"]), args.execute
         )
         LOG.info(
-            "max_ancestors_count=%d max_descendants_count=%d roots_checked=%d roots_vanished=%d",
-            max_ancestors, max_descendants, len(root_details), vanished
+            "max_ancestors_count=%d over_age=%d over_ancestors=%d "
+            "pending_threshold=%d missing_timestamp=%d",
+            max_ancestors, over_age, over_ancestors,
+            args.pending_threshold, missing_ts
         )
-
-        roots = {
-            h: {"depth": None, "descendants": count}
-            for h, count in root_details.items() if count > args.max_descendants
-        }
-        for h, depth in depth_roots(args.rpc_url, entries, args.max_chain_length).items():
-            roots.setdefault(h, {"depth": None, "descendants": root_details.get(h, 0)})
-            roots[h]["depth"] = depth
-
-        selected = sorted(roots.items(), key=lambda x: max(x[1]["depth"] or 0, x[1]["descendants"]), reverse=True)[:args.max_roots]
-        if not selected:
-            LOG.info("no anomalous transaction chains found")
+        if not candidates:
+            LOG.info("no cleanup conditions matched")
             return 0
-        for h, metrics in selected:
+        # First choose high-ancestor and older transactions; limit the trace workload.
+        candidates.sort(key=lambda v: (v[4], v[3], v[1]), reverse=True)
+        selected_candidates = [x[0] for x in candidates[:args.max_candidates]]
+        roots = trace_roots(args.rpc_url, entries, selected_candidates)[:args.max_roots]
+        LOG.warning("cleanup candidates=%d traced=%d roots=%d", len(candidates), len(selected_candidates), len(roots))
+        for h in roots:
             if not TX_RE.fullmatch(h):
                 raise RuntimeError(f"Invalid transaction hash: {h}")
-            LOG.warning("anomaly root=%s depth=%s descendants=%s", h, metrics["depth"], metrics["descendants"])
+            LOG.warning("trigger root=%s pending=%d over_age=%d over_ancestors=%d", h, pending_count, over_age, over_ancestors)
             if not args.execute:
-                LOG.info("DRY_RUN: would remove root=%s on reference and Ansible group=%s", h, args.group)
+                LOG.info("DRY_RUN would remove root=%s on reference and Ansible group=%s", h, args.group)
                 continue
-            # Reference removal happens first; do not invoke Ansible if reference declined removal.
             removed = rpc(args.rpc_url, "remove_transaction", [h])
             LOG.warning("reference remove root=%s result=%s", h, removed)
             if removed is True:
                 remote_cleanup(args, h)
             else:
-                LOG.warning("skip Ansible for %s: reference transaction no longer present", h)
+                LOG.warning("skip Ansible root=%s: reference transaction not found", h)
         return 0
     except (OSError, KeyError, TypeError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
         LOG.exception("guard failed: %s", exc)
