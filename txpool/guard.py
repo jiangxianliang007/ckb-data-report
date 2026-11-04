@@ -110,10 +110,22 @@ def remote_cleanup(args, tx_hash=None, clear=False):
     # Verify EACH target is a testnet node before sending a destructive RPC.
     probe = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "get_blockchain_info", "params": []})
     curl = "curl --fail --silent --show-error --max-time 30 -H 'Content-Type: application/json' --data-binary "
-    command = ("chain_info=$(" + curl + shlex.quote(probe) + " " + shlex.quote(target_rpc)
-               + ") && printf '%s\\n' \"$chain_info\" | grep -Eq "
+    pool_probe = json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tx_pool_info", "params": []})
+    def post_rpc(body):
+        return curl + shlex.quote(body) + " " + shlex.quote(target_rpc)
+    # Echo raw JSON with labels: Ansible includes the inventory hostname in stdout.
+    # This avoids requiring jq on every target host.
+    command = ("chain_info=$(" + post_rpc(probe) + ")"
+               + " && printf '%s\\n' \"$chain_info\" | grep -Eq "
                + shlex.quote(r'"chain"[[:space:]]*:[[:space:]]*"ckb_testnet"')
-               + " && " + curl + shlex.quote(payload) + " " + shlex.quote(target_rpc))
+               + " && before=$(" + post_rpc(pool_probe) + ")"
+               + " && printf 'CKB_TXPOOL_BEFORE %s\\n' \"$before\""
+               + " && cleanup=$(" + post_rpc(payload) + ")"
+               + " && printf 'CKB_TXPOOL_CLEANUP %s\\n' \"$cleanup\""
+               + " && printf '%s\\n' \"$cleanup\" | grep -qv '"
+               + '"error"[[:space:]]*:' + "'"
+               + " && after=$(" + post_rpc(pool_probe) + ")"
+               + " && printf 'CKB_TXPOOL_AFTER %s\\n' \"$after\"")
     cmd = ["ansible", args.group, "-i", args.inventory, "-m", "shell", "-a", command]
     LOG.info("ansible cleanup group=%s method=%s tx=%s", args.group, method, tx_hash)
     started = time.monotonic()
