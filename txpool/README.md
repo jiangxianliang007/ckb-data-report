@@ -36,6 +36,20 @@ python3 txpool/guard.py --pending-threshold 10000 --max-age-seconds 300 --execut
 
 **风险**：整池清理会移除所有 Pending/Proposed 未确认交易（不只是超时交易），可能影响 Faucet 或其他应用发送的正常交易，且可能被其他 P2P 节点重新广播。建议先在 DRY-RUN 验证。程序在参考节点和 Ansible 目标节点调用删除前都会检查目标链为 `ckb_testnet`；确保 Inventory 的 `ckb-testnet` 分组只包含测试网节点。若参考节点已清理但 Ansible 失败，会记录错误并非自动回滚。
 
+## 清理日志
+
+`guard.py` 每次执行记录参考节点 RPC 地址、Inventory、目标组、网络检查耗时以及交易池扫描耗时。
+触发整池清理时记录原因、参考节点清理耗时和 Pending 前后数量。
+
+Ansible 清理会在日志中按目标主机记录 `CKB_TXPOOL_BEFORE`、`CKB_TXPOOL_CLEANUP`、
+`CKB_TXPOOL_AFTER` 三项 JSON-RPC 返回值（`tx_pool_info` 中的 Pending/Proposed 为十六进制），
+并记录 Ansible 整体退出码和耗时。若远端链校验、RPC 请求或清理返回错误，
+该目标任务应失败；出现部分节点成功、部分节点失败时仍需结合各主机日志排查。
+
+```bash
+grep -E 'reference_|CKB_TXPOOL_|ansible finished|guard failed' /etc/ansible/ckb-data-report/ckb-tx-pool-guard.log
+```
+
 ## 诊断报告
 
 ```bash
