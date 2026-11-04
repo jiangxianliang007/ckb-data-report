@@ -10,7 +10,9 @@
 python3 txpool/diagnostics/report.py --rpc-url http://127.0.0.1:8114
 ```
 
-如果当前目录是 `txpool/diagnostics/`，也可以直接执行 `python3 report.py`；以下示例均以仓库根目录为工作目录。\n\n数据量较大时，扫描根交易的 `get_pool_tx_detail_info` 会产生多批只读 RPC（每批 20 条），因此可能耗时数分钟。指定输出目录：
+如果当前目录是 `txpool/diagnostics/`，也可以直接执行 `python3 report.py`；以下示例均以仓库根目录为工作目录。
+
+数据量较大时，扫描根交易的 `get_pool_tx_detail_info` 会产生多批只读 RPC（每批 20 条），因此可能耗时数分钟。指定输出目录：
 
 ```bash
 python3 txpool/diagnostics/report.py --rpc-url http://127.0.0.1:8114 --output-dir /tmp/ckb-txpool-report
@@ -41,7 +43,9 @@ python3 txpool/diagnostics/report.py --snapshot /tmp/ckb-pool.json
 | 交易结构抽样 | Inputs、Outputs、Cell Deps、Lock 类型、Args、父交易依赖、重复 OutPoint | 寻找共同模板或可疑依赖 |
 | 解读与下一步 | 说明判断边界与需要的矿工侧证据 | 避免把相关性误判成因果 |
 
-## 输出文件\n\n默认输出到运行命令时所在目录下的 `./txpool-reports/`，可通过 `--output-dir` 修改。
+## 输出文件
+
+默认输出到运行命令时所在目录下的 `./txpool-reports/`，可通过 `--output-dir` 修改。
 
 运行时同时打印中文 Markdown 报告，并写入：
 
