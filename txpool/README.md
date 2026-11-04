@@ -12,24 +12,29 @@
 
 在 Ansible 控制机执行，默认参考节点 `http://54.238.17.163:8224`，Inventory 分组 `ckb-testnet`，远端 RPC `http://127.0.0.1:18121`。
 
-```bash
-# 仅打印检查结果
-python3 txpool/guard.py --pending-threshold 10000 --max-age-seconds 300 --max-ancestors 10 --clear-on-pending
+自动清理规则（只允许 `ckb_testnet`）：
 
-# 开启清理，Pending > 10000 时先清空参考节点，再通过 Ansible 清空目标组
-# 其余情况，按交易年龄或祖先数量触发定向 remove_transaction
-python3 txpool/guard.py --pending-threshold 10000 --max-age-seconds 300 --max-ancestors 10 --clear-on-pending --execute
+- Pending **大于** `--pending-threshold`（默认 10000）：调用 `clear_tx_pool` 清理整个交易池。
+- 任一 Pending 交易等待时间 **大于** `--max-age-seconds`（默认 300 秒）：同样清理整个交易池，不要求 Pending 数量同时超限。
+- 只有祖先数量超出 `--max-ancestors`（默认 10）时，继续通过 `remove_transaction` 定向清理。
+- `--targeted-only` 可以关闭自动整池清理，恢复只针对根交易删除的模式；`--clear-tx-pool` 是人工强制整池清理。
+- 不带 `--execute` 一律为 DRY-RUN；`--clear-on-pending` 为兼容旧命令保留，现在无需显式指定。
+
+```bash
+# 先检查预期动作，不会删除任何交易
+python3 txpool/guard.py --pending-threshold 10000 --max-age-seconds 300
+
+# 正式执行：任一阈值超过就清理整池
+python3 txpool/guard.py --pending-threshold 10000 --max-age-seconds 300 --execute
 ```
 
-每 3 分钟执行一次的示例（确认测试网节点清单、日志权限和 SSH 凭证后再启用）：
+每 10 分钟运行一次：
 
 ```cron
-*/3 * * * * /usr/bin/flock -n /tmp/ckb-tx-pool-guard.lock /usr/bin/python3 /etc/ansible/ckb-data-report/txpool/guard.py --pending-threshold 10000 --max-age-seconds 300 --max-ancestors 10 --clear-on-pending --execute >> /etc/ansible/ckb-data-report/ckb-tx-pool-guard.log 2>&1
+*/10 * * * * /usr/bin/flock -n /tmp/ckb-tx-pool-guard.lock /usr/bin/python3 /etc/ansible/ckb-data-report/txpool/guard.py --pending-threshold 10000 --max-age-seconds 300 --execute >> /etc/ansible/ckb-data-report/ckb-tx-pool-guard.log 2>&1
 ```
 
-`--clear-on-pending` 是显式开关，不带此开关时超过 Pending 阈值仅进入定向清理候选选择。人工强制整池清理另有 `--clear-tx-pool --execute`。两种整池清理都会处理本地正常未确认交易，且清理不保证其他 P2P 节点不会重新广播。
-
-**运行限制**：参考节点会校验 `ckb_testnet`，但远端仅通过 Ansible 直接调用 RPC，确保 `ckb-testnet` 分组只有测试网主机。不要在不具备 Ansible CLI 的普通 CKB 节点上加 `--execute` 运行，避免出现参考节点清理成功而远端未清理的部分成功状态。
+**风险**：整池清理会移除所有 Pending/Proposed 未确认交易（不只是超时交易），可能影响 Faucet 或其他应用发送的正常交易，且可能被其他 P2P 节点重新广播。建议先在 DRY-RUN 验证。程序在参考节点和 Ansible 目标节点调用删除前都会检查目标链为 `ckb_testnet`；确保 Inventory 的 `ckb-testnet` 分组只包含测试网节点。若参考节点已清理但 Ansible 失败，会记录错误并非自动回滚。
 
 ## 诊断报告
 
