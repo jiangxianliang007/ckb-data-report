@@ -11,7 +11,6 @@ load_dotenv()
 # Get Discord Webhook URL and Prometheus API URL from environment variables
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 PROMETHEUS_API_URL = os.getenv("PROMETHEUS_API_URL")
-API_KEY = os.getenv("X_API_KEY")
 if not DISCORD_WEBHOOK_URL:
     raise ValueError("DISCORD_WEBHOOK_URL not set in .env file")
 if not PROMETHEUS_API_URL:
@@ -20,57 +19,69 @@ if not PROMETHEUS_API_URL:
 # API endpoints
 urls = [
     {
-        "url": "https://mainnet-staging-api.explorer.app5.org/api/v1/blocks/ckb_node_versions",
+        "url": "https://mainnet-api.explorer.nervos.org/api/v1/statistics",
         "headers": {
-            "Accept": "application/json",
-            "Content-Type": "application/vnd.api+json",
-            "X-API-Key": API_KEY
+            "Accept": "application/vnd.api+json",
+            "Content-Type": "application/vnd.api+json"
         }
     },
     {
-        "url": "https://mainnet-staging-api.explorer.app5.org/api/v1/daily_statistics/addresses_count",
+        "url": "https://mainnet-api.explorer.nervos.org/api/v2/blocks/ckb_node_versions",
+        "headers": {"Accept": "application/json"}
+    },
+    {
+        "url": "https://mainnet-api.explorer.nervos.org/api/v1/daily_statistics/addresses_count",
         "headers": {
             "Accept": "application/vnd.api+json",
-            "Content-Type": "application/vnd.api+json",
-            "X-API-Key": API_KEY
+            "Content-Type": "application/vnd.api+json"
         }
     },
     {
-        "url": "https://mainnet-staging-api.explorer.app5.org/api/v1/daily_statistics/total_tx_fee",
+        "url": "https://mainnet-api.explorer.nervos.org/api/v1/daily_statistics/total_tx_fee",
         "headers": {
             "Accept": "application/vnd.api+json",
-            "Content-Type": "application/vnd.api+json",
-            "X-API-Key": API_KEY
+            "Content-Type": "application/vnd.api+json"
         }
     },
     {
-        "url": "https://mainnet-staging-api.explorer.app5.org/api/v1/distribution_data/miner_address_distribution",
+        "url": "https://mainnet-api.explorer.nervos.org/api/v1/daily_statistics/uncle_rate",
         "headers": {
             "Accept": "application/vnd.api+json",
-            "Content-Type": "application/vnd.api+json",
-            "X-API-Key": API_KEY
+            "Content-Type": "application/vnd.api+json"
         }
     },
     {
-        "url": "https://mainnet-staging-api.explorer.app5.org/api/v1/daily_statistics/circulating_supply-liquidity",
+        "url": "https://mainnet-api.explorer.nervos.org/api/v1/distribution_data/miner_address_distribution",
         "headers": {
             "Accept": "application/vnd.api+json",
-            "Content-Type": "application/vnd.api+json",
-            "X-API-Key": API_KEY
+            "Content-Type": "application/vnd.api+json"
         }
     },
     {
-        "url": "https://mainnet-staging-api.explorer.app5.org/api/v1/daily_statistics/live_cells_count-dead_cells_count",
+        "url": "https://mainnet-api.explorer.nervos.org/api/v1/daily_statistics/circulating_supply-liquidity",
         "headers": {
             "Accept": "application/vnd.api+json",
-            "Content-Type": "application/vnd.api+json",
-            "X-API-Key": API_KEY
+            "Content-Type": "application/vnd.api+json"
+        }
+    },
+    {
+        "url": "https://mainnet-api.explorer.nervos.org/api/v1/daily_statistics/live_cells_count-dead_cells_count",
+        "headers": {
+            "Accept": "application/vnd.api+json",
+            "Content-Type": "application/vnd.api+json"
         }
     },
     {
         "url": "https://api-nodes.ckb.dev/",
         "headers": {"Accept": "application/json"}
     },
+    {
+        "url": "https://mainnet-api.explorer.nervos.org/api/v1/daily_statistics/knowledge_size",
+        "headers": {
+            "Accept": "application/vnd.api+json",
+            "Content-Type": "application/vnd.api+json"
+        }
+    }
 ]
 
 def fetch_data(url, headers):
@@ -114,6 +125,13 @@ def convert_tx_fee(total_tx_fee):
     except (TypeError, ValueError):
         return None
 
+def convert_uncle_rate(uncle_rate):
+    """Convert uncle rate to percentage"""
+    try:
+        return float(uncle_rate) * 100
+    except (TypeError, ValueError):
+        return None
+
 def convert_to_billion_ckb(value):
     """Convert Shannons to billion CKB (B, 10^9 CKB)"""
     try:
@@ -125,6 +143,13 @@ def convert_to_million(value):
     """Convert count to million (M)"""
     try:
         return float(value) / 1_000_000  # Convert to M (10^6)
+    except (TypeError, ValueError):
+        return None
+
+def convert_to_million_ckbytes(value):
+    """Convert Shannons to million CKBytes (M, CKBytes)"""
+    try:
+        return float(value) / 100_000_000 / 1_000_000  # Shannons to CKBytes (10^8) to M (10^6)
     except (TypeError, ValueError):
         return None
 
@@ -170,10 +195,10 @@ def calculate_node_distribution(data):
     total_nodes = len(data)
     if total_nodes == 0:
         return {'total_nodes': 0, 'versions': []}
-
+    
     # Count nodes by version_short
     version_counts = Counter(node['version_short'] for node in data if 'version_short' in node)
-
+    
     # Separate versions with >=10 nodes and <10 nodes
     main_versions = []
     other_count = 0
@@ -186,7 +211,7 @@ def calculate_node_distribution(data):
             })
         else:
             other_count += count
-
+    
     # Add 'other' if any versions have <10 nodes
     if other_count > 0:
         main_versions.append({
@@ -194,7 +219,7 @@ def calculate_node_distribution(data):
             "count": other_count,
             "percentage": (other_count / total_nodes) * 100
         })
-
+    
     # Sort by count (descending) and version (descending)
     main_versions.sort(key=lambda x: (-x['count'], x['version']))
     return {'total_nodes': total_nodes, 'versions': main_versions}
@@ -214,6 +239,14 @@ def get_total_tx_fee(data):
     total_tx_fee = latest_record['attributes']['total_tx_fee']
     return convert_tx_fee(total_tx_fee) or 'N/A'
 
+def get_uncle_rate(data):
+    """Get the latest uncle_rate from the data"""
+    if not data or 'data' not in data or not data['data']:
+        return 'N/A'
+    latest_record = max(data['data'], key=lambda x: int(x['attributes']['created_at_unixtimestamp']))
+    uncle_rate = latest_record['attributes']['uncle_rate']
+    return convert_uncle_rate(uncle_rate) or 'N/A'
+
 def get_circulation_metrics(data):
     """Get the latest circulating_supply, liquidity, and Nervos DAO"""
     if not data or 'data' not in data or not data['data']:
@@ -221,16 +254,16 @@ def get_circulation_metrics(data):
     latest_record = max(data['data'], key=lambda x: int(x['attributes']['created_at_unixtimestamp']))
     circulating_supply = latest_record['attributes']['circulating_supply']
     liquidity = latest_record['attributes']['liquidity']
-
+    
     circulating_supply_b = convert_to_billion_ckb(circulating_supply)
     liquidity_b = convert_to_billion_ckb(liquidity)
-
+    
     try:
         nervos_dao = float(circulating_supply) - float(liquidity)
         nervos_dao_b = convert_to_billion_ckb(nervos_dao)
     except (TypeError, ValueError):
         nervos_dao_b = 'N/A'
-
+    
     return {
         'circulating_supply': circulating_supply_b if circulating_supply_b is not None else 'N/A',
         'liquidity': liquidity_b if liquidity_b is not None else 'N/A',
@@ -244,14 +277,22 @@ def get_cell_counts(data):
     latest_record = max(data['data'], key=lambda x: int(x['attributes']['created_at_unixtimestamp']))
     live_cells = latest_record['attributes']['live_cells_count']
     dead_cells = latest_record['attributes']['dead_cells_count']
-
+    
     live_cells_m = convert_to_million(live_cells)
     dead_cells_m = convert_to_million(dead_cells)
-
+    
     return {
         'live_cells': live_cells_m if live_cells_m is not None else 'N/A',
         'dead_cells': dead_cells_m if dead_cells_m is not None else 'N/A'
     }
+
+def get_knowledge_size(data):
+    """Get the latest knowledge_size from the data"""
+    if not data or 'data' not in data or not data['data']:
+        return 'N/A'
+    latest_record = max(data['data'], key=lambda x: int(x['attributes']['created_at_unixtimestamp']))
+    knowledge_size = latest_record['attributes']['knowledge_size']
+    return convert_to_million_ckbytes(knowledge_size) or 'N/A'
 
 def get_mainnet_db_size():
     """Get the latest Mainnet DB size from Prometheus"""
@@ -263,7 +304,7 @@ def split_message(content, max_length=1900):
     chunks = []
     current_chunk = []
     current_length = 0
-
+    
     for line in lines:
         line_length = len(line) + 1  # +1 for newline
         if current_length + line_length > max_length and current_chunk:
@@ -273,13 +314,13 @@ def split_message(content, max_length=1900):
         else:
             current_chunk.append(line)
             current_length += line_length
-
+    
     if current_chunk:
         chunks.append('\n'.join(current_chunk))
-
+    
     return chunks
 
-def generate_daily_report(versions_data, addresses_data, tx_fee_data, miner_address_data, circulation_data, cell_counts_data, nodes_data):
+def generate_daily_report(statistics_data, versions_data, addresses_data, tx_fee_data, uncle_rate_data, miner_address_data, circulation_data, cell_counts_data, nodes_data, knowledge_size_data):
     """Generate a Markdown report from the fetched data"""
     current_date = datetime.now().strftime("%Y-%m-%d")
     report = f"""# Nervos CKB Daily Report ({current_date})
@@ -316,8 +357,30 @@ def generate_daily_report(versions_data, addresses_data, tx_fee_data, miner_addr
     addresses_count = get_unique_addresses(addresses_data)
     report += f"- **Unique addresses used**: {addresses_count}\n"
 
+    # Process transaction-related data
+    report += "\n## Transaction\n"
+    if not statistics_data or 'data' not in statistics_data or 'attributes' not in statistics_data['data']:
+        report += "- **Statistics Data**: Error: Unable to fetch data.\n"
+    else:
+        attributes = statistics_data['data']['attributes']
+        transactions_24hrs = attributes.get('transactions_last_24hrs', 'N/A')
+        transactions_per_minute = attributes.get('transactions_count_per_minute', 'N/A')
+        report += f"- **Transactions (Last 24 Hours)**: {transactions_24hrs}\n"
+        report += f"- **Transactions per Minute**: {transactions_per_minute}\n"
+    
     total_tx_fee = get_total_tx_fee(tx_fee_data)
     report += f"- **Daily transaction fees**: {total_tx_fee:.2f} CKB\n" if total_tx_fee != 'N/A' else f"- **Daily transaction fees**: {total_tx_fee}\n"
+
+    # Process mining-related data
+    report += "\n## Mining\n"
+    if not statistics_data or 'data' not in statistics_data or 'attributes' not in statistics_data['data']:
+        report += "- **Hash Rate**: Error: Unable to fetch data.\n"
+    else:
+        hash_rate = convert_hash_rate(attributes.get('hash_rate'))
+        report += f"- **Hash Rate**: {hash_rate:.2f} TH/s\n" if hash_rate is not None else "- **Hash Rate**: N/A\n"
+    
+    uncle_rate = get_uncle_rate(uncle_rate_data)
+    report += f"- **Uncle rate**: {uncle_rate:.4f} %\n" if uncle_rate != 'N/A' else f"- **Uncle rate**: {uncle_rate}\n"
 
     # Process circulation
     report += "\n## Circulation\n"
@@ -325,6 +388,11 @@ def generate_daily_report(versions_data, addresses_data, tx_fee_data, miner_addr
     report += f"- **Circulating Supply**: {circulation_metrics['circulating_supply']:.4f} CKB (B)\n" if circulation_metrics['circulating_supply'] != 'N/A' else f"- **Circulating Supply**: {circulation_metrics['circulating_supply']}\n"
     report += f"- **Liquidity**: {circulation_metrics['liquidity']:.4f} CKB (B)\n" if circulation_metrics['liquidity'] != 'N/A' else f"- **Liquidity**: {circulation_metrics['liquidity']}\n"
     report += f"- **Nervos DAO**: {circulation_metrics['nervos_dao']:.4f} CKB (B)\n" if circulation_metrics['nervos_dao'] != 'N/A' else f"- **Nervos DAO**: {circulation_metrics['nervos_dao']}\n"
+
+    # Process knowledge size
+    report += "\n## Knowledge Size\n"
+    knowledge_size = get_knowledge_size(knowledge_size_data)
+    report += f"- **Knowledge Size**: {knowledge_size:.6f} M (CKBytes)\n" if knowledge_size != 'N/A' else f"- **Knowledge Size**: {knowledge_size}\n"
 
     # Process Mainnet DB size
     report += "\n## Mainnet DB Size\n"
@@ -360,7 +428,7 @@ def send_to_discord(report_content):
     try:
         # Split content if too long
         chunks = split_message(report_content, max_length=1900)
-
+        
         for i, chunk in enumerate(chunks):
             payload = {
                 "content": chunk
@@ -376,18 +444,21 @@ def send_to_discord(report_content):
 
 def main():
     # Fetch data from APIs
-    versions_data = fetch_data(urls[0]["url"], urls[0]["headers"])
-    addresses_data = fetch_data(urls[1]["url"], urls[1]["headers"])
-    tx_fee_data = fetch_data(urls[2]["url"], urls[2]["headers"])
-    miner_address_data = fetch_data(urls[3]["url"], urls[3]["headers"])
-    circulation_data = fetch_data(urls[4]["url"], urls[4]["headers"])
-    cell_counts_data = fetch_data(urls[5]["url"], urls[5]["headers"])
-    nodes_data = fetch_data(urls[6]["url"], urls[6]["headers"])
-
+    statistics_data = fetch_data(urls[0]["url"], urls[0]["headers"])
+    versions_data = fetch_data(urls[1]["url"], urls[1]["headers"])
+    addresses_data = fetch_data(urls[2]["url"], urls[2]["headers"])
+    tx_fee_data = fetch_data(urls[3]["url"], urls[3]["headers"])
+    uncle_rate_data = fetch_data(urls[4]["url"], urls[4]["headers"])
+    miner_address_data = fetch_data(urls[5]["url"], urls[5]["headers"])
+    circulation_data = fetch_data(urls[6]["url"], urls[6]["headers"])
+    cell_counts_data = fetch_data(urls[7]["url"], urls[7]["headers"])
+    nodes_data = fetch_data(urls[8]["url"], urls[8]["headers"])
+    knowledge_size_data = fetch_data(urls[9]["url"], urls[9]["headers"])
+    
     # Generate and save the report
-    report = generate_daily_report(versions_data, addresses_data, tx_fee_data, miner_address_data, circulation_data, cell_counts_data, nodes_data)
+    report = generate_daily_report(statistics_data, versions_data, addresses_data, tx_fee_data, uncle_rate_data, miner_address_data, circulation_data, cell_counts_data, nodes_data, knowledge_size_data)
     save_report(report)
-
+    
     # Send report to Discord
     send_to_discord(report)
 

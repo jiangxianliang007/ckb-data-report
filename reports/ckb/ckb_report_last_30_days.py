@@ -1,6 +1,6 @@
 import requests
 import json
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import os
 import plotly.graph_objects as go
@@ -15,7 +15,6 @@ from prometheus_api_client import PrometheusConnect
 load_dotenv()
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 PROMETHEUS_API_URL = os.getenv("PROMETHEUS_API_URL")
-API_KEY = os.getenv("X_API_KEY")
 if not DISCORD_WEBHOOK_URL:
     raise ValueError("DISCORD_WEBHOOK_URL not set in .env file")
 if not PROMETHEUS_API_URL:
@@ -27,46 +26,31 @@ beijing_tz = pytz.timezone("Asia/Shanghai")
 # API configuration for different data types
 API_CONFIG = {
     "avg_hash_rate": {
-        "url": "https://mainnet-staging-api.explorer.app5.org/api/v1/daily_statistics/avg_hash_rate",
+        "url": "https://mainnet-api.explorer.nervos.org/api/v1/daily_statistics/avg_hash_rate",
         "headers": {
             "Accept": "application/vnd.api+json",
-            "Content-Type": "application/vnd.api+json",
-            "X-API-Key": API_KEY
+            "Content-Type": "application/vnd.api+json"
         }
     },
     "knowledge_size": {
-        "url": "https://mainnet-staging-api.explorer.app5.org/api/v1/daily_statistics/knowledge_size",
+        "url": "https://mainnet-api.explorer.nervos.org/api/v1/daily_statistics/knowledge_size",
         "headers": {
             "Accept": "application/vnd.api+json",
-            "Content-Type": "application/vnd.api+json",
-            "X-API-Key": API_KEY
+            "Content-Type": "application/vnd.api+json"
         }
     },
     "total_depositors_count_total_dao_deposit": {
-        "url": "https://mainnet-staging-api.explorer.app5.org/api/v1/daily_statistics/total_depositors_count-total_dao_deposit",
+        "url": "https://mainnet-api.explorer.nervos.org/api/v1/daily_statistics/total_depositors_count-total_dao_deposit",
         "headers": {
             "Accept": "application/vnd.api+json",
-            "Content-Type": "application/vnd.api+json",
-            "X-API-Key": API_KEY
+            "Content-Type": "application/vnd.api+json"
         }
     },
     "transactions_count": {
-        "url": "https://mainnet-staging-api.explorer.app5.org/api/v1/daily_statistics/transactions_count",
+        "url": "https://mainnet-api.explorer.nervos.org/api/v1/daily_statistics/transactions_count",
         "headers": {
             "Accept": "application/vnd.api+json",
-            "Content-Type": "application/vnd.api+json",
-            "X-API-Key": API_KEY
-        }
-    },
-    "uncle_rate": {
-        "url": "https://mainnet-staging-api.explorer.app5.org/api/v1/daily_statistics/uncle_rate",
-        "headers": {
-            "Accept": "application/vnd.api+json",
-            "Content-Type": "application/vnd.api+json",
-            "X-API-Key": API_KEY
-        },
-        "params": {
-        "limit": 30
+            "Content-Type": "application/vnd.api+json"
         }
     },
     "redis_key_not_expired_total": {
@@ -79,7 +63,7 @@ def fetch_data(endpoint_config):
     """Fetch data from the specified API endpoint"""
     if "headers" in endpoint_config:
         try:
-            response = requests.get(endpoint_config["url"], headers=endpoint_config["headers"], params=endpoint_config.get("params"))
+            response = requests.get(endpoint_config["url"], headers=endpoint_config["headers"])
             response.raise_for_status()
             print(f"Fetched data from {endpoint_config['url']} - Status: {response.status_code}")
             return response.json()
@@ -89,7 +73,7 @@ def fetch_data(endpoint_config):
     elif "prometheus_url" in endpoint_config:
         try:
             prom = PrometheusConnect(url=endpoint_config["prometheus_url"], disable_ssl=True)
-            end_time = datetime.now(timezone.utc).astimezone(beijing_tz).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
+            end_time = datetime.utcnow().replace(tzinfo=pytz.utc).astimezone(beijing_tz).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)  # Up to yesterday 00:00
             start_time = end_time - timedelta(days=29)  # 30 days back from yesterday
             print(f"Fetching Prometheus data from {start_time} to {end_time}")
             data = prom.custom_query_range(
@@ -133,17 +117,11 @@ def process_data(data, data_type):
     dates = []
     values = []
 
-    if data_type in [
-        "avg_hash_rate",
-        "knowledge_size",
-        "total_depositors_count_total_dao_deposit",
-        "transactions_count",
-        "uncle_rate"
-    ]:
+    if data_type in ["avg_hash_rate", "knowledge_size", "total_depositors_count_total_dao_deposit", "transactions_count"]:
         for item in data["data"]:
             timestamp = int(item["attributes"]["created_at_unixtimestamp"])
-            utc_dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
-            beijing_dt = utc_dt.astimezone(beijing_tz)
+            utc_dt = datetime.utcfromtimestamp(timestamp)
+            beijing_dt = utc_dt.replace(tzinfo=pytz.utc).astimezone(beijing_tz)
             date = beijing_dt.date()
             if data_type == "avg_hash_rate":
                 value = convert_hash_rate(item["attributes"]["avg_hash_rate"])
@@ -153,8 +131,6 @@ def process_data(data, data_type):
                 value = convert_to_billion_ckb(item["attributes"]["total_dao_deposit"])
             elif data_type == "transactions_count":
                 value = int(item["attributes"]["transactions_count"])
-            elif data_type == "uncle_rate":
-                value = float(item["attributes"]["uncle_rate"]) * 100
             else:
                 value = None
             if value is not None:
@@ -170,7 +146,7 @@ def process_data(data, data_type):
         for series in data:
             for point in series["values"]:
                 timestamp, value = point
-                dt = datetime.fromtimestamp(float(timestamp), tz=timezone.utc).astimezone(beijing_tz)
+                dt = datetime.utcfromtimestamp(float(timestamp)).replace(tzinfo=pytz.utc).astimezone(beijing_tz)
                 date = dt.date()
                 if date not in dates:  # Take the first value of each day (closest to 0:00)
                     dates.append(date)
@@ -189,11 +165,7 @@ def process_data(data, data_type):
 def create_chart(dates, values, title, yaxis_title):
     """Create a line chart using Plotly with data point labels and aligned ticks"""
     # Format values to 3 decimal places for labels (or integer for transactions_count)
-    text_labels = [
-        f"{value:.2f}%" if yaxis_title.lower().startswith("uncle") else
-        (f"{value:.3f}" if isinstance(value, float) else str(value))
-        for value in values
-    ]
+    text_labels = [f"{value:.3f}" if isinstance(value, float) else str(value) for value in values]
 
     # Generate continuous date range for X-axis ticks
     if dates:
@@ -295,10 +267,6 @@ def main():
             title = "Nervos Network Active Node (Last 30 Days)"
             yaxis_title = "Number of active nodes"
             chart_name = "active_node.png"
-        elif data_type == "uncle_rate":
-            title = "Nervos Network Uncle Rate (Last 30 Days)"
-            yaxis_title = "Uncle Rate (%)"
-            chart_name = "uncle_rate.png"
 
         img_bytes = create_chart(dates, values, title, yaxis_title)
         send_to_discord(img_bytes, chart_name, content=title)
