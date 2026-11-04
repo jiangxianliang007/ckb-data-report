@@ -227,7 +227,16 @@ def main():
     raw_path=target / f"txpool-snapshot-{suffix}.json"
     raw_path.write_text(json.dumps({"result":pool},ensure_ascii=False),encoding="utf-8")
     print(report_text)
-    print(f"\\n报告文件：{report_path}\\n交易池快照：{raw_path}")
+    print(f"\n报告文件：{report_path}\n交易池快照：{raw_path}")
+    if args.clear_tx_pool:
+        chain = single(args.rpc_url, "get_blockchain_info", [], args.timeout)["chain"]
+        if chain != "ckb_testnet":
+            raise RuntimeError(f"仅允许清理 Testnet，实际网络：{chain}")
+        before = single(args.rpc_url, "tx_pool_info", [], args.timeout)
+        print(f"开始清理单节点 {args.rpc_url}；Pending={number(before['pending'])} Proposed={number(before['proposed'])}")
+        single(args.rpc_url, "clear_tx_pool", [], args.timeout)
+        after = single(args.rpc_url, "tx_pool_info", [], args.timeout)
+        print(f"清理 RPC 已执行，Pending {number(before['pending'])} -> {number(after['pending'])}；Proposed {number(before['proposed'])} -> {number(after['proposed'])}")
 
 if __name__=="__main__":
     main()
