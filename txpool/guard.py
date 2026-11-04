@@ -110,13 +110,28 @@ def remote_cleanup(args, tx_hash=None, clear=False):
     # Verify EACH target is a testnet node before sending a destructive RPC.
     probe = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "get_blockchain_info", "params": []})
     curl = "curl --fail --silent --show-error --max-time 30 -H 'Content-Type: application/json' --data-binary "
-    command = ("chain_info=$(" + curl + shlex.quote(probe) + " " + shlex.quote(target_rpc)
-               + ") && printf '%s\\n' \"$chain_info\" | grep -Eq "
+    pool_probe = json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tx_pool_info", "params": []})
+    def post_rpc(body):
+        return curl + shlex.quote(body) + " " + shlex.quote(target_rpc)
+    # Echo raw JSON with labels: Ansible includes the inventory hostname in stdout.
+    # This avoids requiring jq on every target host.
+    command = ("chain_info=$(" + post_rpc(probe) + ")"
+               + " && printf '%s\\n' \"$chain_info\" | grep -Eq "
                + shlex.quote(r'"chain"[[:space:]]*:[[:space:]]*"ckb_testnet"')
-               + " && " + curl + shlex.quote(payload) + " " + shlex.quote(target_rpc))
+               + " && before=$(" + post_rpc(pool_probe) + ")"
+               + " && printf 'CKB_TXPOOL_BEFORE %s\\n' \"$before\""
+               + " && cleanup=$(" + post_rpc(payload) + ")"
+               + " && printf 'CKB_TXPOOL_CLEANUP %s\\n' \"$cleanup\""
+               + " && ! printf '%s\\n' \"$cleanup\" | grep -Eq "
+               + shlex.quote(r'"error"[[:space:]]*:')
+               + " && after=$(" + post_rpc(pool_probe) + ")"
+               + " && printf 'CKB_TXPOOL_AFTER %s\\n' \"$after\"")
     cmd = ["ansible", args.group, "-i", args.inventory, "-m", "shell", "-a", command]
     LOG.info("ansible cleanup group=%s method=%s tx=%s", args.group, method, tx_hash)
+    started = time.monotonic()
     result = subprocess.run(cmd, text=True, capture_output=True, timeout=180)
+    LOG.info("ansible finished group=%s method=%s rc=%d duration_seconds=%.3f",
+             args.group, method, result.returncode, time.monotonic() - started)
     if result.stdout.strip():
         LOG.info("ansible stdout: %s", result.stdout.strip())
     if result.stderr.strip():
@@ -152,13 +167,21 @@ def main():
     if min(args.pending_threshold, args.max_age_seconds, args.max_ancestors, args.max_candidates, args.max_roots, args.max_estimated_txs) < 1:
         p.error("thresholds and max-roots must be positive")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    LOG.info("guard start reference_rpc=%s inventory=%s group=%s target_rpc=%s execute=%s",
+             args.rpc_url, args.inventory, args.group, args.local_rpc, args.execute)
 
     try:
+        reference_started = time.monotonic()
         info = rpc(args.rpc_url, "get_blockchain_info")
+        LOG.info("reference network_check rpc=%s chain=%s elapsed_seconds=%.3f",
+                 args.rpc_url, info["chain"], time.monotonic() - reference_started)
         chain = info["chain"]
         if chain != "ckb_testnet":
             raise RuntimeError(f"Refusing non-testnet reference chain: {chain}")
+        scan_started = time.monotonic()
         pool = rpc(args.rpc_url, "get_raw_tx_pool", [True])
+        LOG.info("reference pool_scan rpc=%s elapsed_seconds=%.3f",
+                 args.rpc_url, time.monotonic() - scan_started)
         entries = {**pool["pending"], **pool["proposed"]}
         max_ancestors = max((int(e["ancestors_count"], 16) for e in entries.values()), default=0)
         # Any of the three configurable conditions triggers targeted root removal.
@@ -216,12 +239,14 @@ def main():
             if not args.execute:
                 LOG.warning("DRY_RUN would clear reference and Ansible group")
                 return 0
+            clear_started = time.monotonic()
             rpc(args.rpc_url, "clear_tx_pool")
-            LOG.warning("reference clear_tx_pool complete")
+            LOG.warning("reference clear_tx_pool complete rpc=%s elapsed_seconds=%.3f",
+                        args.rpc_url, time.monotonic() - clear_started)
             remote_cleanup(args, clear=True)
             after = rpc(args.rpc_url, "tx_pool_info")
-            LOG.info("full_clear reason=%s pending_before=%d pending_after=%d",
-                     full_clear_reason, pending_count, int(after["pending"], 16))
+            LOG.info("full_clear reason=%s reference=%s pending_before=%d pending_after=%d",
+                     full_clear_reason, args.rpc_url, pending_count, int(after["pending"], 16))
             return 0
         if not candidates:
             LOG.info("no cleanup conditions matched")
