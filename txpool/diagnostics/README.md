@@ -7,26 +7,42 @@
 在具有 Python 3 的 CKB 节点（或能访问该 RPC 的运维机）执行：
 
 ```bash
-python3 txpool_diagnostics/report.py --rpc-url http://127.0.0.1:8114
+python3 txpool/diagnostics/report.py --rpc-url http://127.0.0.1:8114
 ```
 
 数据量较大时，扫描根交易的 `get_pool_tx_detail_info` 会产生多批只读 RPC（每批 20 条），因此可能耗时数分钟。指定输出目录：
 
 ```bash
-python3 txpool_diagnostics/report.py --rpc-url http://127.0.0.1:8114 --output-dir /tmp/ckb-txpool-report
+python3 txpool/diagnostics/report.py --rpc-url http://127.0.0.1:8114 --output-dir /tmp/ckb-txpool-report
 ```
 
 快速模式（跳过根后代详情和交易结构样本）：
 
 ```bash
-python3 txpool_diagnostics/report.py --skip-details --skip-samples
+python3 txpool/diagnostics/report.py --skip-details --skip-samples
 ```
 
 **离线模式**：如果现场已经清理，用之前保存的 `get_raw_tx_pool(true)` JSON 数据仍能统计祖先、费率、大小和入池时间，但无法查询真实后代或交易内容：
 
 ```bash
-python3 txpool_diagnostics/report.py --snapshot /tmp/ckb-pool.json
+python3 txpool/diagnostics/report.py --snapshot /tmp/ckb-pool.json
 ```
+
+## 单节点 Testnet 清理（可选）
+
+`report.py` 默认仅执行只读诊断，不会清理任何交易池。需要清理时，在仓库根目录运行：
+
+```bash
+python3 txpool/diagnostics/report.py --rpc-url http://127.0.0.1:8114 --clear-tx-pool --execute --yes
+```
+
+该命令先保存 Markdown 报告和原始交易池 JSON 快照，再重新检查目标节点网络必须为 `ckb_testnet`，随后仅对指定 RPC 运行一次 `clear_tx_pool`。最后输出 Pending/Proposed 清理前后的数量，**不调用 Ansible、不清理其他节点**。
+
+- `--clear-tx-pool` 必须同时提供 `--execute --yes`，避免误操作。
+- 不允许通过 `--snapshot` 离线模式执行清理。
+- 这是整池清理，包含正常未确认交易；可能影响 Faucet 等应用，并可能发生 P2P 重新广播。
+- 清理前的报告和快照会写到 `--output-dir`（默认相对工作目录 `./txpool-reports`）。
+- 如果诊断过程因 RPC 超时/异常失败，清理不会开始；大交易池建议先 `--skip-details --skip-samples` 以减少诊断耗时。
 
 ## 报告内容及含义
 
