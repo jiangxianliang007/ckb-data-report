@@ -4,28 +4,30 @@
 
 ## 一键执行
 
-在具有 Python 3 的 CKB 节点（或能访问该 RPC 的运维机）执行：
+在仓库根目录（`ckb-data-report/`）下，在具有 Python 3 的 CKB 节点或能访问该 RPC 的运维机执行：
 
 ```bash
-python3 txpool_diagnostics/report.py --rpc-url http://127.0.0.1:8114
+python3 txpool/diagnostics/report.py --rpc-url http://127.0.0.1:8114
 ```
+
+如果当前目录是 `txpool/diagnostics/`，也可以直接执行 `python3 report.py`；以下示例均以仓库根目录为工作目录。
 
 数据量较大时，扫描根交易的 `get_pool_tx_detail_info` 会产生多批只读 RPC（每批 20 条），因此可能耗时数分钟。指定输出目录：
 
 ```bash
-python3 txpool_diagnostics/report.py --rpc-url http://127.0.0.1:8114 --output-dir /tmp/ckb-txpool-report
+python3 txpool/diagnostics/report.py --rpc-url http://127.0.0.1:8114 --output-dir /tmp/ckb-txpool-report
 ```
 
 快速模式（跳过根后代详情和交易结构样本）：
 
 ```bash
-python3 txpool_diagnostics/report.py --skip-details --skip-samples
+python3 txpool/diagnostics/report.py --skip-details --skip-samples
 ```
 
 **离线模式**：如果现场已经清理，用之前保存的 `get_raw_tx_pool(true)` JSON 数据仍能统计祖先、费率、大小和入池时间，但无法查询真实后代或交易内容：
 
 ```bash
-python3 txpool_diagnostics/report.py --snapshot /tmp/ckb-pool.json
+python3 txpool/diagnostics/report.py --snapshot /tmp/ckb-pool.json
 ```
 
 ## 报告内容及含义
@@ -42,6 +44,8 @@ python3 txpool_diagnostics/report.py --snapshot /tmp/ckb-pool.json
 | 解读与下一步 | 说明判断边界与需要的矿工侧证据 | 避免把相关性误判成因果 |
 
 ## 输出文件
+
+默认输出到运行命令时所在目录下的 `./txpool-reports/`，可通过 `--output-dir` 修改。
 
 运行时同时打印中文 Markdown 报告，并写入：
 
