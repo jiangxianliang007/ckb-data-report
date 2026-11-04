@@ -122,8 +122,8 @@ def remote_cleanup(args, tx_hash=None, clear=False):
                + " && printf 'CKB_TXPOOL_BEFORE %s\\n' \"$before\""
                + " && cleanup=$(" + post_rpc(payload) + ")"
                + " && printf 'CKB_TXPOOL_CLEANUP %s\\n' \"$cleanup\""
-               + " && printf '%s\\n' \"$cleanup\" | grep -qv '"
-               + '"error"[[:space:]]*:' + "'"
+               + " && ! printf '%s\\n' \"$cleanup\" | grep -Eq "
+               + shlex.quote(r'"error"[[:space:]]*:')
                + " && after=$(" + post_rpc(pool_probe) + ")"
                + " && printf 'CKB_TXPOOL_AFTER %s\\n' \"$after\"")
     cmd = ["ansible", args.group, "-i", args.inventory, "-m", "shell", "-a", command]
