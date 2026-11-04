@@ -107,9 +107,13 @@ def remote_cleanup(args, tx_hash=None, clear=False):
     if ":" in hostname:
         hostname = "[" + hostname + "]"
     target_rpc = parsed._replace(netloc=hostname + ":" + port).geturl()
-    command = ("curl --fail --silent --show-error --max-time 30 "
-               "-H 'Content-Type: application/json' --data-binary "
-               + shlex.quote(payload) + " " + shlex.quote(target_rpc))
+    # Verify EACH target is a testnet node before sending a destructive RPC.
+    probe = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "get_blockchain_info", "params": []})
+    curl = "curl --fail --silent --show-error --max-time 30 -H 'Content-Type: application/json' --data-binary "
+    command = ("chain_info=$(" + curl + shlex.quote(probe) + " " + shlex.quote(target_rpc)
+               + ") && printf '%s\\n' \"$chain_info\" | grep -Eq "
+               + shlex.quote(r'"chain"[[:space:]]*:[[:space:]]*"ckb_testnet"')
+               + " && " + curl + shlex.quote(payload) + " " + shlex.quote(target_rpc))
     cmd = ["ansible", args.group, "-i", args.inventory, "-m", "shell", "-a", command]
     LOG.info("ansible cleanup group=%s method=%s tx=%s", args.group, method, tx_hash)
     result = subprocess.run(cmd, text=True, capture_output=True, timeout=180)
@@ -133,7 +137,9 @@ def main():
     p.add_argument("--max-candidates", type=int, default=500)
     p.add_argument("--max-roots", type=int, default=20)
     p.add_argument("--clear-on-pending", action="store_true",
-                   help="clear entire testnet pool when pending exceeds --pending-threshold")
+                   help="deprecated compatibility flag; threshold-based full clear is now the default")
+    p.add_argument("--targeted-only", action="store_true",
+                   help="disable automatic full-pool clears and use targeted root removal only")
     p.add_argument("--clear-tx-pool", action="store_true",
                    help="manually clear entire testnet pool; requires --execute")
     p.add_argument("--max-estimated-txs", type=int, default=500,
@@ -152,26 +158,6 @@ def main():
         chain = info["chain"]
         if chain != "ckb_testnet":
             raise RuntimeError(f"Refusing non-testnet reference chain: {chain}")
-        # Full-pool cleanup is explicitly opted in; age/ancestors alone never trigger it.
-        if args.clear_tx_pool or args.clear_on_pending:
-            pool_info = rpc(args.rpc_url, "tx_pool_info")
-            count = int(pool_info["pending"], 16)
-            clear = args.clear_tx_pool or count > args.pending_threshold
-            LOG.info("clear_check pending=%d threshold=%d forced=%s eligible=%s",
-                     count, args.pending_threshold, args.clear_tx_pool, clear)
-            if clear:
-                LOG.warning("FULL_POOL_CLEAR pending=%d reference=%s group=%s execute=%s",
-                            count, args.rpc_url, args.group, args.execute)
-                if not args.execute:
-                    LOG.warning("DRY_RUN would clear reference and Ansible group")
-                    return 0
-                rpc(args.rpc_url, "clear_tx_pool")
-                LOG.warning("reference clear_tx_pool complete")
-                remote_cleanup(args, clear=True)
-                after = rpc(args.rpc_url, "tx_pool_info")
-                LOG.info("full_clear pending_before=%d pending_after=%d",
-                         count, int(after["pending"], 16))
-                return 0
         pool = rpc(args.rpc_url, "get_raw_tx_pool", [True])
         entries = {**pool["pending"], **pool["proposed"]}
         max_ancestors = max((int(e["ancestors_count"], 16) for e in entries.values()), default=0)
@@ -213,6 +199,30 @@ def main():
             "max_ancestors_count=%d ancestors_threshold=%d over_ancestors=%d",
             max_ancestors, args.max_ancestors, over_ancestors
         )
+        # Pending count or transaction age triggers whole-pool cleanup by default.
+        # Ancestor depth alone continues to use targeted root removal.
+        full_clear_reason = (
+            "manual" if args.clear_tx_pool else
+            "pending" if pending_count > args.pending_threshold else
+            "age" if over_age > 0 else None
+        )
+        if full_clear_reason and (args.clear_tx_pool or not args.targeted_only):
+            LOG.warning(
+                "FULL_POOL_CLEAR reason=%s pending=%d threshold=%d over_age=%d "
+                "age_threshold=%d reference=%s group=%s execute=%s",
+                full_clear_reason, pending_count, args.pending_threshold, over_age,
+                args.max_age_seconds, args.rpc_url, args.group, args.execute
+            )
+            if not args.execute:
+                LOG.warning("DRY_RUN would clear reference and Ansible group")
+                return 0
+            rpc(args.rpc_url, "clear_tx_pool")
+            LOG.warning("reference clear_tx_pool complete")
+            remote_cleanup(args, clear=True)
+            after = rpc(args.rpc_url, "tx_pool_info")
+            LOG.info("full_clear reason=%s pending_before=%d pending_after=%d",
+                     full_clear_reason, pending_count, int(after["pending"], 16))
+            return 0
         if not candidates:
             LOG.info("no cleanup conditions matched")
             return 0
